@@ -1,9 +1,17 @@
 from flask import Flask, jsonify, request
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
+import os
+from dotenv import load_dotenv
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+
+load_dotenv()
 
 app = Flask(__name__)
+
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///library.db'
+app.config['JWT_SECRET_KEY'] = os.getenv('KEY_JWT')
+jwt = JWTManager(app)
 
 db = SQLAlchemy(app)
 
@@ -12,7 +20,6 @@ class Category(db.Model):
     types = db.Column(db.String(20), unique=True, nullable=False)
     books = db.relationship('Book', backref='category')
 
-    
 class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -34,9 +41,10 @@ class Book(db.Model):
 
 @app.route('/')
 def initial():
-    return 'Welcome to LibraryAPI'
+    return jsonify({'message': 'Welcome to LibraryAPI'})
 
-#  Auth
+# Route User
+# Route Signup
 @app.route('/api/signup', methods=["POST"])
 def signup():
     data = request.json
@@ -49,10 +57,10 @@ def signup():
 
         if username_exist:
             return jsonify({'message': 'Error. Username already exists'}), 400
-       
+
         if email_exist:
             return jsonify({'message': 'Error. Email already exists'}), 400
-        
+       
         hashed_password = generate_password_hash(data['password'])
         user = User(username=data['username'], email=data['email'], password=hashed_password)
         db.session.add(user)
@@ -60,22 +68,28 @@ def signup():
         return jsonify({'message': 'User created successfully'}), 201
     return jsonify({'message': 'Invalid data'}), 400
 
+
+# Route Login
 @app.route('/api/login', methods=["POST"])
 def login():
     data = request.json
- 
+
     if data.get('email') and data.get('password'):
         query = db.select(User).where(User.email == data['email'])
         user = db.session.execute(query).scalar()
- 
+
         if user and check_password_hash(user.password, data['password']):
-            return jsonify({'message': 'Login successful!'}), 200
-   
+            access_token = create_access_token(indentity=str(user.id))
+            return jsonify({
+                'message': 'Login successful!',
+                'token': access_token
+            }), 200
         return jsonify({'message': 'Invalid credentials'}), 401
     return jsonify({'message': 'Email and Password are required'}), 400
-
-#Author
+       
+# Route Authors
 @app.route('/api/authors/add', methods=["POST"])
+@jwt_required()
 def add_author():
     data = request.json
 
@@ -84,13 +98,14 @@ def add_author():
         author_exist = db.session.execute(query).scalar()
 
         if author_exist:
-            return jsonify({'message': 'Author already exists.'}), 400
-        
-        new_author = Author(name=data['name'])
-        db.session.add(new_author)
+            return jsonify({'message': 'Author already exists'}), 400
+
+        author = Author(name=data['name'])
+        db.session.add(author)
         db.session.commit()
         return jsonify({'message': 'Author added successfully'}), 201
-    return jsonify({'message': 'Invalid data author'}), 400
+    return jsonify({'message': 'Error. Invalid data!'}), 400
+
 
 @app.route('/api/authors', methods=["GET"])
 def get_authors():
@@ -108,6 +123,7 @@ def get_authors():
         authors_list.append(author_content)
     return jsonify(authors_list), 200
 
+
 @app.route('/api/authors/<int:author_id>', methods=["GET"])
 def search_author_specific(author_id):
     author = db.session.get(Author, author_id)
@@ -119,54 +135,57 @@ def search_author_specific(author_id):
                 "id": book.id,
                 "title": book.name
             })
-        
         return jsonify({
             "id": author.id,
             "name": author.name,
             "books": books_list
         }), 200
-    return jsonify({'message': 'Author not exist'}), 404
+    return jsonify({'message': 'Author not exist.'}), 404
 
 @app.route('/api/authors/delete/<int:author_id>', methods=["DELETE"])
+@jwt_required()
 def delete_author(author_id):
     author = db.session.get(Author, author_id)
 
     if author:
         if len(author.books) > 0:
-            return jsonify({'message': 'Alert. This Author has books listed'}), 400
+            return jsonify({'message': 'Alert. This Author has books listed.'}), 400
         
         db.session.delete(author)
         db.session.commit()
         return jsonify({'message': 'Author deleted successfully'}), 200
     return jsonify({'message': 'Author not exist'}), 404
 
+
 @app.route('/api/authors/update/<int:author_id>', methods=["PUT"])
+@jwt_required()
 def update_author(author_id):
     author = db.session.get(Author, author_id)
 
     if author:
         data = request.json
+
         if 'name' in data and data['name'].strip():
             author.name = data['name']
             db.session.commit()
             return jsonify({'message': 'Author updated successfully'}), 200
         else:
-            return jsonify({'message': 'Invalid data'}), 400
+            return jsonify({'message': 'Invalid name'}), 400
     return jsonify({'message': 'Author not exist'}), 404
 
-
-#Route Books
+# Route Books
 @app.route('/api/books/add', methods=["POST"])
+@jwt_required()
 def add_book():
     data = request.json
 
     if 'name' in data and data['name'].strip() and 'price' in data and data['price'] > 0 and 'category_id' in data and 'author_id' in data:
+        author_exist = db.session.get(Author, data['author_id'])
         category_exist = db.session.get(Category, data['category_id'])
-        autthor_exist = db.session.get(Author, data['author_id'])
 
-        if not category_exist or not autthor_exist:
-            return jsonify({'message': 'Error. Category or Author not exist.'}), 404
-        
+        if not category_exist or not author_exist:
+            return jsonify({'message': 'Error. Category or Author not exist'}), 404
+
         book = Book(
             name=data['name'],
             price=data['price'],
@@ -177,24 +196,27 @@ def add_book():
         db.session.add(book)
         db.session.commit()
         return jsonify({'message': 'Book added successfully'}), 201
-    return jsonify({'meesage': 'Invalid data'}), 400
+    return jsonify({'message': 'Error. Invalid data!'}), 400
+
 
 @app.route('/api/books', methods=["GET"])
 def get_books():
     query = db.select(Book)
     books = db.session.execute(query).scalars().all()
-    book_list = []
+    books_list = []
 
     for book in books:
         book_content = {
             'name': book.name,
             'price': book.price,
             'author': book.author.name if book.author else "Desconhecido",
-            'category': book.category.types if book.category else "Sem Categoria"
+            'category': book.categories.types if book.categories else "Sem Categoria"
         }
-        book_list.append(book_content)
-    return jsonify(book_list), 200
+        books_list.append(book_content)
+    return jsonify(books_list), 200
 
+
+#Search Route Books
 @app.route('/api/books/search', methods=["GET"])
 def search_book():
     search_term = request.args.get('name', '')
@@ -208,7 +230,7 @@ def search_book():
             'name': book.name,
             'price': book.price,
             'author': book.author.name if book.author else "Desconhecido",
-            'category': book.category.types if book.category else "Sem Categoria"
+            'category': book.categories.types if book.categories else "Sem Categoria"
         }
         books_list.append(book_content)
     return jsonify(books_list), 200
@@ -226,19 +248,19 @@ def search_filter_max_price():
 
         for book in books:
             book_content = {
-            'name': book.name,
-            'price': book.price,
-            'author': book.author.name if book.author else "Desconhecido",
-            'category': book.category.types if book.category else "Sem Categoria"
+                'name': book.name,
+                'price': book.price,
+                'author': book.author.name if book.author else "Desconhecido",
+                'category': book.categories.types if book.categories else "Sem Categoria"
             }
             books_list.append(book_content)
         return jsonify(books_list), 200
     except ValueError:
-        return jsonify({'message': 'Invalid price value. Please use numbers.'})
-
-
-#Categories
+        return jsonify({'message': 'Error. Invalid price value. Please use numbers.'})
+   
+# Route Category
 @app.route('/api/categories/add', methods=["POST"])
+@jwt_required()
 def add_category():
     data = request.json
 
@@ -247,46 +269,48 @@ def add_category():
         category_exist = db.session.execute(query).scalar()
 
         if category_exist:
-            return jsonify({'message': 'Category already exists'}), 400
-        
+            return jsonify({'message': 'Error. Category already exists'}), 400
+       
         category = Category(types=data['types'])
         db.session.add(category)
         db.session.commit()
-        return jsonify({'message': 'Category added successfully'}), 201
+        return jsonify({'message': 'Category created successfully'}), 201
     return jsonify({'message': 'Invalid data'}), 400
+
+         
 
 @app.route('/api/categories', methods=["GET"])
 def get_categories():
     categories = db.session.execute(db.select(Category)).scalars().all()
 
-    categories_list = []
+    category_list = []
+
     for category in categories:
-        content_category = {
+        category_content = {
             "id": category.id,
             "name": category.types,
             "qnt_books": len(category.books)
         }
-        categories_list.append(content_category)
-    return jsonify(categories_list)
+        category_list.append(category_content)
+    return jsonify(category_list)
+
 
 @app.route('/api/categories/delete/<int:category_id>', methods=["DELETE"])
+@jwt_required()
 def delete_category(category_id):
     category_exist = db.session.get(Category, category_id)
 
     if not category_exist:
         return jsonify({'message': 'Category not exist'}), 404
-    
+   
     if len(category_exist.books) > 0:
-        return jsonify({'message': 'Category has books listed'}), 400
-    
+        return jsonify({'message': 'This Category has books listed'}), 400
+   
     db.session.delete(category_exist)
     db.session.commit()
-    return jsonify({'message': 'Category deleted successfully'})
-
-
+    return jsonify({'message': 'Category deleted successfully'}), 200
 
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    app.run(debug=True)
-
+    app.run(debug=True) 
