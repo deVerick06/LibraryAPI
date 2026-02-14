@@ -79,7 +79,7 @@ def login():
         user = db.session.execute(query).scalar()
 
         if user and check_password_hash(user.password, data['password']):
-            access_token = create_access_token(indentity=str(user.id))
+            access_token = create_access_token(identity=str(user.id))
             return jsonify({
                 'message': 'Login successful!',
                 'token': access_token
@@ -210,7 +210,7 @@ def get_books():
             'name': book.name,
             'price': book.price,
             'author': book.author.name if book.author else "Desconhecido",
-            'category': book.categories.types if book.categories else "Sem Categoria"
+            'category': book.category.types if book.category else "Sem Categoria"
         }
         books_list.append(book_content)
     return jsonify(books_list), 200
@@ -230,7 +230,7 @@ def search_book():
             'name': book.name,
             'price': book.price,
             'author': book.author.name if book.author else "Desconhecido",
-            'category': book.categories.types if book.categories else "Sem Categoria"
+            'category': book.category.types if book.category else "Sem Categoria"
         }
         books_list.append(book_content)
     return jsonify(books_list), 200
@@ -251,7 +251,7 @@ def search_filter_max_price():
                 'name': book.name,
                 'price': book.price,
                 'author': book.author.name if book.author else "Desconhecido",
-                'category': book.categories.types if book.categories else "Sem Categoria"
+                'category': book.category.types if book.category else "Sem Categoria"
             }
             books_list.append(book_content)
         return jsonify(books_list), 200
